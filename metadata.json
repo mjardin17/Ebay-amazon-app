@@ -1,0 +1,6 @@
+{
+  "name": "Listofa AI - Reseller & Arbitrage Suite",
+  "description": "AI reseller suite with eBay Cassini & Amazon FBA listings, Boxem auto-ungating & approval engine, 2D barcode shipment prep, arbitrage research, and Pinterest marketing studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

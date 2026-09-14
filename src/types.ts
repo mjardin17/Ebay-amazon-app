@@ -113,6 +113,7 @@ export interface BoxemAsinLookup {
   };
   sellerCentralApplyUrl: string;
   distributorSource?: string;
+  provenance?: "confirmed_marketplace_api" | "estimated_inferred_ai";
 }
 
 export interface BoxemFbaShipmentBox {

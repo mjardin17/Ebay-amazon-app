@@ -17,18 +17,20 @@ export function createTikTokOAuthRoutes(deps: TikTokOAuthRouteDependencies): {
 } {
   const now = deps.now || (() => Date.now());
   const config = getTikTokConfig();
+  const stateSecret = process.env.TIKTOK_OAUTH_STATE_SECRET?.trim();
+  if (!stateSecret) {
+    throw new Error("TIKTOK_OAUTH_STATE_SECRET is required to mount TikTok OAuth routes");
+  }
   const state = deps.oauthState || new OneTimeTikTokOAuthState(
-    new TikTokOAuthState(process.env.TIKTOK_OAUTH_STATE_SECRET || ""),
+    new TikTokOAuthState(stateSecret),
     new MemoryOAuthStateStore(),
   );
   const oauth = deps.oauth || new TikTokOAuthClient(config, deps.tokenStore);
 
   const start: RequestHandler = (req: Request, res: Response) => {
     const returnTo = typeof req.query.returnTo === "string" ? req.query.returnTo : undefined;
-    const oauthState = state.create(returnTo, now());
-    res.redirect(oauth.authorizationUrl(oauthState));
+    res.redirect(oauth.authorizationUrl(state.create(returnTo, now())));
   };
-
   const callback: RequestHandler = async (req: Request, res: Response) => {
     const receivedState = typeof req.query.state === "string" ? req.query.state : "";
     const code = typeof req.query.code === "string" ? req.query.code : "";
@@ -39,27 +41,19 @@ export function createTikTokOAuthRoutes(deps: TikTokOAuthRouteDependencies): {
       await oauth.exchangeAuthorizationCode(code);
       return res.json({ success: true, status: "AUTHORIZED", provider: "tiktok-shop", tokenStored: true });
     } catch (error: any) {
-      // Never serialize the provider error: it may contain a token endpoint body.
-      return res.status(error?.message?.includes("state") || error?.message?.includes("OAuth") ? 400 : 502).json({
-        success: false,
-        status: "AUTH_FAILED",
-        error: "TikTok authorization could not be completed",
-      });
+      const stateError = /state|OAuth/i.test(error?.message || "");
+      return res.status(stateError ? 400 : 502).json({ success: false, status: "AUTH_FAILED", error: "TikTok authorization could not be completed" });
     }
   };
-
-  const status: RequestHandler = (_req: Request, res: Response) => {
-    const configured = hasTikTokAppCredentials();
+  const status: RequestHandler = (_req, res) => {
     const token = deps.tokenStore.get();
     return res.json({
       provider: "tiktok-shop",
-      status: !configured ? "NOT_CONFIGURED" : token?.access_token ? "AUTHORIZED" : "AUTH_REQUIRED",
+      status: !hasTikTokAppCredentials() ? "NOT_CONFIGURED" : token?.access_token ? "AUTHORIZED" : "AUTH_REQUIRED",
       tokenStored: Boolean(token?.access_token),
-      tokenExpiresAt: undefined,
       shopBinding: "UNVERIFIED",
       tokenPersistence: "NON-PRODUCTION TOKEN STORAGE — PROCESS LOCAL",
     });
   };
-
   return { start, callback, status };
 }

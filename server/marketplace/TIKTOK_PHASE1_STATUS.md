@@ -1,7 +1,7 @@
-## TikTok Shop Phase 1 verification status
+## TikTok OAuth route status
 
-This repository currently contains a provider/client foundation only. It does not yet wire OAuth routes into `server.ts`, persist tokens durably, or call a verified TikTok Shop business endpoint.
+`server/marketplace/tiktokRoutes.ts` provides dependency-injected Express handlers for start, callback, and safe connection status. The handlers are intentionally separate from `server.ts` so they can be mounted without changing the existing Amazon/eBay routes.
 
-The default TikTok URLs and parameter names in `tiktokConfig.ts` and `tiktokOAuth.ts` are configuration defaults and remain **UNVERIFIED** until confirmed against the current TikTok Shop Open Platform documentation and exercised against a real authorized seller account. Unit tests are **MOCKED/SIMULATED** and establish only **CODE VERIFIED** after the commands pass.
+The current token and OAuth-state stores remain process-local. **NON-PRODUCTION TOKEN STORAGE — PROCESS LOCAL**.
 
-`MemoryTikTokTokenStore` and `MemoryOAuthStateStore` are process-local. A horizontally scaled or restarted deployment requires a shared encrypted token/state store before production use.
+TikTok endpoint URLs, OAuth parameter names, shop binding, `shop_cipher`, signatures, and business API contracts remain **UNVERIFIED**. These handlers do not claim live API verification and do not implement products, orders, inventory, fulfillment, webhooks, or research.

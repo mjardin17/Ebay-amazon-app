@@ -34,20 +34,9 @@ import { BoxemBrandUngate, BoxemAsinLookup, BoxemFbaShipmentPlan } from "../type
 
 export const BoxemUngatingEngine: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<"auto-ungater" | "asin-scanner" | "invoice-playbook" | "fba-shipment">("auto-ungater");
-  const [brands, setBrands] = useState<BoxemBrandUngate[]>(() => {
-    const saved = localStorage.getItem("boxem_ungated_brands");
-    if (saved) {
-      try {
-        const ungatedIds: string[] = JSON.parse(saved);
-        return INITIAL_BOXEM_BRANDS.map((b) =>
-          ungatedIds.includes(b.id) ? { ...b, status: "Auto-Ungated" as const } : b
-        );
-      } catch (e) {
-        return INITIAL_BOXEM_BRANDS;
-      }
-    }
-    return INITIAL_BOXEM_BRANDS;
-  });
+  // Brand status comes only from the built-in list. Unlocks saved by earlier
+  // simulated runs in localStorage are not applied, because no Amazon approval backed them.
+  const [brands, setBrands] = useState<BoxemBrandUngate[]>(() => INITIAL_BOXEM_BRANDS);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
@@ -69,59 +58,20 @@ export const BoxemUngatingEngine: React.FC = () => {
   const [copiedBarcode, setCopiedBarcode] = useState(false);
   const [printingLabelAsin, setPrintingLabelAsin] = useState<string | null>(null);
 
-  // Save ungated brands to localStorage
-  const saveUngatedBrands = (updatedBrands: BoxemBrandUngate[]) => {
-    const ungatedIds = updatedBrands.filter((b) => b.status === "Auto-Ungated").map((b) => b.id);
-    localStorage.setItem("boxem_ungated_brands", JSON.stringify(ungatedIds));
-  };
+  // No Amazon request is made by these actions. Reporting "approved" or changing a brand's
+  // status without one would be a false result, so they only say that nothing was sent.
+  const NOT_CONNECTED_NOTICE =
+    "Not connected to Amazon SP-API. No approval request was sent and no brand status was changed.";
 
   // 1-Click single brand auto ungate
-  const handleSingleUngate = (brandId: string) => {
-    const updated = brands.map((b) => {
-      if (b.id === brandId) {
-        return { ...b, status: "Auto-Ungated" as const };
-      }
-      return b;
-    });
-    setBrands(updated);
-    saveUngatedBrands(updated);
+  const handleSingleUngate = (_brandId: string) => {
+    setBulkLogs([NOT_CONNECTED_NOTICE]);
   };
 
-  // 1-Click bulk auto ungate bot simulation (matching Boxem's automated 5 brands/sec unlock flow)
-  const handleRunBulkUngater = async () => {
-    setIsBulkUngating(true);
+  // 1-Click bulk auto ungate (disabled until a real SP-API approval call exists)
+  const handleRunBulkUngater = () => {
     setBulkProgress(0);
-    setBulkLogs(["Connecting to Amazon SP-API & Seller Central Application Gateway..."]);
-
-    const eligibleBrands = brands.filter((b) => b.autoUngateEligible && b.status !== "Auto-Ungated");
-    if (eligibleBrands.length === 0) {
-      setBulkLogs((prev) => [...prev, "All eligible brands are already unlocked!"]);
-      setIsBulkUngating(false);
-      return;
-    }
-
-    let current = [...brands];
-
-    for (let i = 0; i < eligibleBrands.length; i++) {
-      const brand = eligibleBrands[i];
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      
-      setBulkLogs((prev) => [
-        `[SP-API] Requesting 0-invoice approval for ${brand.brand} (${brand.category})... APPROVED!`,
-        ...prev.slice(0, 8),
-      ]);
-
-      current = current.map((b) => (b.id === brand.id ? { ...b, status: "Auto-Ungated" as const } : b));
-      setBrands([...current]);
-      setBulkProgress(Math.round(((i + 1) / eligibleBrands.length) * 100));
-    }
-
-    saveUngatedBrands(current);
-    setBulkLogs((prev) => [
-      `🎉 Complete! Successfully unlocked ${eligibleBrands.length} brands with 0 invoices required.`,
-      ...prev,
-    ]);
-    setIsBulkUngating(false);
+    setBulkLogs([NOT_CONNECTED_NOTICE]);
   };
 
   // Reset demo

@@ -16,32 +16,38 @@ import { CapabilityInfo, MarketplaceCapabilitiesReport } from "./types";
 import { amazonProvider, AmazonCreatorsProvider } from "./amazonProvider";
 import { ebayMarketplaceProvider, EbayMarketplaceProvider } from "./ebayProvider";
 import { soldHistoryProvider, SoldHistoryProvider } from "./soldHistoryProvider";
+import { firecrawlProvider, FirecrawlResearchProvider } from "./firecrawlProvider";
 
 export class MarketplaceCapabilityManager {
   private amazon: AmazonCreatorsProvider;
   private ebay: EbayMarketplaceProvider;
   private soldHistory: SoldHistoryProvider;
+  private firecrawl: FirecrawlResearchProvider;
 
   constructor(
     amazon: AmazonCreatorsProvider = amazonProvider,
     ebay: EbayMarketplaceProvider = ebayMarketplaceProvider,
-    soldHistory: SoldHistoryProvider = soldHistoryProvider
+    soldHistory: SoldHistoryProvider = soldHistoryProvider,
+    firecrawl: FirecrawlResearchProvider = firecrawlProvider
   ) {
     this.amazon = amazon;
     this.ebay = ebay;
     this.soldHistory = soldHistory;
+    this.firecrawl = firecrawl;
   }
 
   /**
    * Generates comprehensive report of all marketplace capabilities
    */
   public async getFullReport(): Promise<MarketplaceCapabilitiesReport> {
-    const [amazonCatalog, ebayCatalog, ebayBrowse, ebayInsights] = await Promise.all([
-      this.amazon.getCapabilityStatus(),
-      this.ebay.getCatalogCapabilityStatus(),
-      this.ebay.getBrowseCapabilityStatus(),
-      this.soldHistory.getCapabilityStatus(),
-    ]);
+    const [amazonCatalog, ebayCatalog, ebayBrowse, ebayInsights, firecrawlResearch] =
+      await Promise.all([
+        this.amazon.getCapabilityStatus(),
+        this.ebay.getCatalogCapabilityStatus(),
+        this.ebay.getBrowseCapabilityStatus(),
+        this.soldHistory.getCapabilityStatus(),
+        this.firecrawl.getCapabilityStatus(),
+      ]);
 
     // OffersV2 capability
     const amazonOffers: CapabilityInfo = {
@@ -101,6 +107,7 @@ export class MarketplaceCapabilityManager {
         ebay_catalog_matching: ebayCatalog,
         ebay_browse_search: ebayBrowse,
         ebay_marketplace_insights: ebayInsights,
+        firecrawl_product_research: firecrawlResearch,
         resale_ai_estimation: resaleAi,
         amazon_paapi_5: deprecatedPaApi,
         ebay_product_api: deprecatedEbayProductApi,

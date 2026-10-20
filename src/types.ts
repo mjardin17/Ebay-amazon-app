@@ -113,8 +113,227 @@ export interface BoxemAsinLookup {
   };
   sellerCentralApplyUrl: string;
   distributorSource?: string;
-  provenance?: "confirmed_marketplace_api" | "estimated_inferred_ai";
+  provenance?: "confirmed_marketplace_api" | "extracted_public_web_firecrawl" | "estimated_inferred_ai";
 }
+
+export type DataProvenanceType =
+  | "confirmed_marketplace_api"
+  | "extracted_public_web_firecrawl"
+  | "estimated_inferred_ai";
+
+export interface FirecrawlIdentifierEvidenceUI {
+  upc?: string;
+  ean?: string;
+  gtin?: string;
+  asin?: string;
+  epid?: string;
+  mpn?: string;
+  sku?: string;
+  modelNumber?: string;
+  identifierConfidence: "verified_format" | "inferred_candidate" | "missing" | "contradictory";
+  identifierNotes: string[];
+}
+
+export interface FirecrawlDataIntegrityReportUI {
+  missingFields: string[];
+  staleDataWarnings: string[];
+  contradictions: string[];
+  inferredFields: string[];
+  marketplaceDisclaimers: {
+    notProofOfSoldTransaction: true;
+    notProofOfLiveInventory: true;
+    notProofOfSellerEligibilityOrUngating: true;
+    notProofOfExactFeesOrNetProfit: true;
+    requiresAuthorizedApiVerification: true;
+  };
+}
+
+export interface NormalizedFirecrawlProductResearchUI {
+  sourceUrl: string;
+  canonicalUrl?: string;
+  domain: string;
+  retrievalTimestamp: number;
+  cacheExpiresAt?: number;
+  isStale: boolean;
+  provenance: "extracted_public_web_firecrawl";
+  extractionStatus:
+    | "extracted"
+    | "partial"
+    | "inaccessible"
+    | "malformed"
+    | "unsupported_url"
+    | "not_configured"
+    | "disabled"
+    | "rate_limited"
+    | "error";
+  statusMessage: string;
+  confidenceScorePct: number;
+  title?: string;
+  brand?: string;
+  model?: string;
+  category?: string;
+  description?: string;
+  observedPrice?: number;
+  observedCurrency?: string;
+  observedPriceNote: string;
+  observedAvailabilityText?: string;
+  imageUrls: string[];
+  specifications: Record<string, string>;
+  identifiers: FirecrawlIdentifierEvidenceUI;
+  rawMarkdownSnippet?: string;
+  integrity: FirecrawlDataIntegrityReportUI;
+}
+
+export interface CrossMarketplaceMatchAssessmentUI {
+  targetChannel: "Amazon" | "eBay";
+  matchConfidence: "high" | "medium" | "low" | "unverified" | "none";
+  confidenceScorePct: number;
+  isVerifiedCatalogMatch: boolean;
+  matchedOn: string[];
+  uncertaintyReasons: string[];
+  contradictions: string[];
+  candidateId?: string;
+  candidateTitle?: string;
+  candidateBrand?: string;
+  candidateUrl?: string;
+  candidateProvenance?: DataProvenanceType;
+}
+
+export interface ChannelProfitEstimateUI {
+  channel: "eBay" | "Amazon FBA";
+  profitabilityStatus: "profitable_estimate" | "unprofitable_estimate" | "insufficient_data";
+  isProfitableEstimate: boolean;
+  isConfirmedProfit: false;
+  currency?: string;
+  sourceCurrency?: string;
+  targetCurrency?: string;
+  currencyMismatch?: boolean;
+  sourceCost: number | null;
+  sourceCostProvenance: DataProvenanceType | "user_supplied" | "missing";
+  sourceShipping: number;
+  sourceTaxRatePct?: number;
+  estimatedSourceTax?: number;
+  targetResalePrice: number | null;
+  targetResalePriceProvenance: DataProvenanceType | "user_supplied" | "missing";
+  marketplaceFee: number | null;
+  marketplaceFeeNote: string;
+  fulfillmentOrPostageFee: number | null;
+  fulfillmentFeeProvenance?: DataProvenanceType | "user_supplied" | "missing";
+  fulfillmentFeeNote: string;
+  promotedOrPlacementFee: number;
+  netProfitEstimate: number | null;
+  roiPctEstimate: number | null;
+  marginPctEstimate: number | null;
+  breakEvenPrice: number | null;
+  warnings: string[];
+}
+
+export interface ArbitrageEnrichmentReportUI {
+  timestamp: number;
+  queryUsed: string;
+  firecrawlResearch: NormalizedFirecrawlProductResearchUI | null;
+  marketplaceData: {
+    amazon: {
+      status: string;
+      statusMessage: string;
+      products: {
+        asin: string;
+        title: string;
+        brand: string;
+        category: string;
+        image?: string;
+        buyBoxPrice?: number;
+        detailPageUrl?: string;
+        retrievalTimestamp: number;
+        provenance: DataProvenanceType;
+      }[];
+      matchAssessment: CrossMarketplaceMatchAssessmentUI;
+    };
+    ebayCatalog: {
+      status: string;
+      statusMessage: string;
+      catalogProduct: {
+        epid: string;
+        title: string;
+        brand?: string;
+        mpn?: string;
+        gtin?: string;
+        imageUrl?: string;
+        productWebUrl?: string;
+        retrievalTimestamp: number;
+        provenance: DataProvenanceType;
+      } | null;
+      matchAssessment: CrossMarketplaceMatchAssessmentUI;
+    };
+    ebayBrowse: {
+      status: string;
+      statusMessage: string;
+      activeListings: {
+        itemId: string;
+        title: string;
+        price: number;
+        currency: string;
+        condition: string;
+        itemWebUrl: string;
+        shippingCost?: number;
+        retrievalTimestamp: number;
+        provenance: DataProvenanceType;
+      }[];
+      activePriceStats?: {
+        count: number;
+        lowestPrice: number;
+        medianPrice: number;
+        highestPrice: number;
+        note: string;
+      };
+    };
+    ebaySoldHistory: {
+      query: string;
+      marketplace: string;
+      retrievedTimestamp: number;
+      provenance: DataProvenanceType;
+      status: string;
+      statusMessage: string;
+    } | null;
+  };
+  financialEstimates: {
+    ebay: ChannelProfitEstimateUI;
+    amazonFba: ChannelProfitEstimateUI;
+  };
+  overallSummary: {
+    hasVerifiedIdentifierMatch: boolean;
+    hasStaleOrContradictoryEvidence: boolean;
+    missingEvidenceList: string[];
+    actionableWarnings: string[];
+  };
+}
+
+export interface SavedResearchOpportunity {
+  id: string;
+  savedAt: string;
+  title: string;
+  brand?: string;
+  model?: string;
+  upc?: string;
+  asin?: string;
+  epid?: string;
+  sourceUrl?: string;
+  sourcePlatform: string;
+  sourceCost: number | null;
+  sourceShipping: number;
+  outboundShippingEstimate: number;
+  targetEbayPrice: number | null;
+  targetAmazonPrice: number | null;
+  ebayNetProfitEstimate: number | null;
+  amazonNetProfitEstimate: number | null;
+  ebayProfitabilityStatus: "profitable_estimate" | "unprofitable_estimate" | "insufficient_data";
+  amazonProfitabilityStatus: "profitable_estimate" | "unprofitable_estimate" | "insufficient_data";
+  ebayMatchConfidence: "high" | "medium" | "low" | "unverified" | "none";
+  amazonMatchConfidence: "high" | "medium" | "low" | "unverified" | "none";
+  hasVerifiedIdentifierMatch: boolean;
+  enrichmentReport?: ArbitrageEnrichmentReportUI;
+}
+
 
 export interface BoxemFbaShipmentBox {
   boxNumber: number;

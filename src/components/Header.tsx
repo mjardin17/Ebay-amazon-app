@@ -20,9 +20,9 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 text-slate-100 shadow-md">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex flex-wrap items-center justify-between min-h-16 py-2 lg:py-0 gap-2">
           {/* Logo and Brand */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 via-orange-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-orange-500/20 text-white font-black text-xl">
               L
             </div>
@@ -43,11 +43,11 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Navigation Modes */}
-          <nav className="flex items-center space-x-1 sm:space-x-2 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60">
+          <nav className="order-3 lg:order-none w-full lg:w-auto flex items-center overflow-x-auto space-x-1 sm:space-x-2 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60">
             <button
               id="nav-tab-lister"
               onClick={() => setActiveTab("lister")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+              className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                 activeTab === "lister"
                   ? "bg-amber-500 text-slate-950 font-semibold shadow-sm"
                   : "text-slate-300 hover:text-white hover:bg-slate-700/50"
@@ -60,7 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="nav-tab-arbitrage"
               onClick={() => setActiveTab("arbitrage")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+              className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                 activeTab === "arbitrage"
                   ? "bg-emerald-500 text-slate-950 font-semibold shadow-sm"
                   : "text-slate-300 hover:text-white hover:bg-slate-700/50"
@@ -76,7 +76,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="nav-tab-boxem"
               onClick={() => setActiveTab("boxem")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+              className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                 activeTab === "boxem"
                   ? "bg-amber-500 text-slate-950 font-semibold shadow-sm"
                   : "text-slate-300 hover:text-white hover:bg-slate-700/50"
@@ -92,7 +92,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="nav-tab-drafts"
               onClick={() => setActiveTab("drafts")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+              className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                 activeTab === "drafts"
                   ? "bg-indigo-500 text-white font-semibold shadow-sm"
                   : "text-slate-300 hover:text-white hover:bg-slate-700/50"
@@ -110,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               id="nav-tab-pins"
               onClick={() => setActiveTab("pins")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+              className={`shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
                 activeTab === "pins"
                   ? "bg-rose-500 text-slate-950 font-semibold shadow-sm"
                   : "text-slate-300 hover:text-white hover:bg-slate-700/50"

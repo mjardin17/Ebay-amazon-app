@@ -13,12 +13,19 @@ export type CapabilityState =
 
 export type DataProvenance =
   | "confirmed_marketplace_api"
+  | "extracted_public_web_firecrawl"
   | "estimated_inferred_ai";
 
 export interface CapabilityInfo {
   id: string;
   name: string;
-  provider: "amazon-creators" | "ebay-catalog" | "ebay-browse" | "ebay-insights" | "resale-ai";
+  provider:
+    | "amazon-creators"
+    | "ebay-catalog"
+    | "ebay-browse"
+    | "ebay-insights"
+    | "resale-ai"
+    | "firecrawl-research";
   state: CapabilityState;
   message: string;
   lastChecked: number;
@@ -169,3 +176,219 @@ export interface MarketplaceCacheEntry<T> {
   retrievedTimestamp: number;
   expirationTimestamp: number;
 }
+
+/**
+ * Firecrawl Supplementary Public Product-Page Research Types
+ *
+ * Strictly separates public web extraction ("extracted_public_web_firecrawl")
+ * from confirmed official marketplace API data ("confirmed_marketplace_api")
+ * and AI statistical estimates ("estimated_inferred_ai").
+ */
+
+export type FirecrawlExtractionStatus =
+  | "extracted"
+  | "partial"
+  | "inaccessible"
+  | "malformed"
+  | "unsupported_url"
+  | "not_configured"
+  | "disabled"
+  | "rate_limited"
+  | "error";
+
+export type IdentifierConfidenceState =
+  | "verified_format"
+  | "inferred_candidate"
+  | "missing"
+  | "contradictory";
+
+export interface FirecrawlIdentifierEvidence {
+  upc?: string;
+  ean?: string;
+  gtin?: string;
+  asin?: string;
+  epid?: string;
+  mpn?: string;
+  sku?: string;
+  modelNumber?: string;
+  identifierConfidence: IdentifierConfidenceState;
+  identifierNotes: string[];
+}
+
+export interface FirecrawlDataIntegrityReport {
+  missingFields: string[];
+  staleDataWarnings: string[];
+  contradictions: string[];
+  inferredFields: string[];
+  marketplaceDisclaimers: {
+    notProofOfSoldTransaction: true;
+    notProofOfLiveInventory: true;
+    notProofOfSellerEligibilityOrUngating: true;
+    notProofOfExactFeesOrNetProfit: true;
+    requiresAuthorizedApiVerification: true;
+  };
+}
+
+export interface NormalizedFirecrawlProductResearch {
+  sourceUrl: string;
+  canonicalUrl?: string;
+  domain: string;
+  retrievalTimestamp: number;
+  cacheExpiresAt?: number;
+  isStale: boolean;
+  provenance: "extracted_public_web_firecrawl";
+  extractionStatus: FirecrawlExtractionStatus;
+  statusMessage: string;
+  confidenceScorePct: number;
+  title?: string;
+  brand?: string;
+  model?: string;
+  category?: string;
+  description?: string;
+  observedPrice?: number;
+  observedCurrency?: string;
+  observedPriceNote: string;
+  observedAvailabilityText?: string;
+  imageUrls: string[];
+  specifications: Record<string, string>;
+  identifiers: FirecrawlIdentifierEvidence;
+  rawMarkdownSnippet?: string;
+  integrity: FirecrawlDataIntegrityReport;
+}
+
+export interface FirecrawlExtractOptions {
+  forceRefresh?: boolean;
+  timeoutMs?: number;
+  staleThresholdMs?: number;
+}
+
+/**
+ * Cross-Marketplace Product Matching & Arbitrage Enrichment Types
+ */
+
+export type ProductMatchConfidence =
+  | "high"
+  | "medium"
+  | "low"
+  | "unverified"
+  | "none";
+
+export type MatchEvidenceBasis =
+  | "gtin"
+  | "asin"
+  | "epid"
+  | "brand_mpn"
+  | "brand_model"
+  | "title_similarity";
+
+export interface CrossMarketplaceMatchAssessment {
+  targetChannel: "Amazon" | "eBay";
+  matchConfidence: ProductMatchConfidence;
+  confidenceScorePct: number;
+  isVerifiedCatalogMatch: boolean;
+  matchedOn: MatchEvidenceBasis[];
+  uncertaintyReasons: string[];
+  contradictions: string[];
+  candidateId?: string; // ASIN or ePID
+  candidateTitle?: string;
+  candidateBrand?: string;
+  candidateUrl?: string;
+  candidateProvenance?: DataProvenance;
+}
+
+export type FinancialInputProvenance =
+  | DataProvenance
+  | "user_supplied"
+  | "missing";
+
+export interface ChannelProfitEstimate {
+  channel: "eBay" | "Amazon FBA";
+  profitabilityStatus: "profitable_estimate" | "unprofitable_estimate" | "insufficient_data";
+  isProfitableEstimate: boolean;
+  isConfirmedProfit: false; // Always false because fees/shipping/resale include estimates or unverified inputs
+  currency: string;
+  sourceCurrency: string;
+  targetCurrency: string;
+  currencyMismatch: boolean;
+  sourceCost: number | null;
+  sourceCostProvenance: FinancialInputProvenance;
+  sourceShipping: number;
+  sourceTaxRatePct: number;
+  estimatedSourceTax: number;
+  targetResalePrice: number | null;
+  targetResalePriceProvenance: FinancialInputProvenance;
+  marketplaceFee: number | null;
+  marketplaceFeeNote: string;
+  fulfillmentOrPostageFee: number | null;
+  fulfillmentFeeProvenance: FinancialInputProvenance;
+  fulfillmentFeeNote: string;
+  promotedOrPlacementFee: number;
+  netProfitEstimate: number | null;
+  roiPctEstimate: number | null;
+  marginPctEstimate: number | null;
+  breakEvenPrice: number | null;
+  warnings: string[];
+}
+
+export interface ArbitrageEnrichmentRequest {
+  sourceUrl?: string;
+  productQuery?: string;
+  brand?: string;
+  model?: string;
+  upc?: string;
+  asin?: string;
+  epid?: string;
+  sourceCost?: number;
+  sourceCurrency?: string;
+  sourceShipping?: number;
+  sourceTaxRatePct?: number;
+  outboundShippingEstimate?: number | null;
+  targetEbayPriceOverride?: number;
+  targetAmazonPriceOverride?: number;
+  promotedRatePct?: number;
+  forceRefresh?: boolean;
+}
+
+export interface ArbitrageEnrichmentReport {
+  timestamp: number;
+  queryUsed: string;
+  firecrawlResearch: NormalizedFirecrawlProductResearch | null;
+  marketplaceData: {
+    amazon: {
+      status: CapabilityState | "skipped" | "error";
+      statusMessage: string;
+      products: NormalizedAmazonProduct[];
+      matchAssessment: CrossMarketplaceMatchAssessment;
+    };
+    ebayCatalog: {
+      status: CapabilityState | "skipped" | "error";
+      statusMessage: string;
+      catalogProduct: NormalizedEbayCatalogProduct | null;
+      matchAssessment: CrossMarketplaceMatchAssessment;
+    };
+    ebayBrowse: {
+      status: CapabilityState | "skipped" | "error";
+      statusMessage: string;
+      activeListings: NormalizedEbayListing[];
+      activePriceStats?: {
+        count: number;
+        lowestPrice: number;
+        medianPrice: number;
+        highestPrice: number;
+        note: string;
+      };
+    };
+    ebaySoldHistory: SalesHistoryResult | null;
+  };
+  financialEstimates: {
+    ebay: ChannelProfitEstimate;
+    amazonFba: ChannelProfitEstimate;
+  };
+  overallSummary: {
+    hasVerifiedIdentifierMatch: boolean;
+    hasStaleOrContradictoryEvidence: boolean;
+    missingEvidenceList: string[];
+    actionableWarnings: string[];
+  };
+}
+

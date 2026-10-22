@@ -32,8 +32,14 @@ import {
 } from "../server/marketplace/firecrawlProvider";
 import {
   ArbitrageEnrichmentService,
+  areEquivalentGtins,
   calculateArbitrageFinancials,
+  detectMultiPackCount,
+  evaluateModelCompatibility,
   evaluateProductMatch,
+  filterComparableEbayListings,
+  normalizeCanonicalGtin,
+  parseProductWeightAndDimensions,
   validateArbitrageEnrichmentPayload,
   validateFirecrawlExtractPayload,
   verifyResearchApiAccessToken,
@@ -1386,6 +1392,644 @@ async function runTests() {
       false,
       "Unverified/contradictory catalog match must not be marked profitable without manual price override"
     );
+  });
+
+  // 29. Regression: Piece-Count Products ("282 Pieces") Are Not Treated as Multi-Unit Bundles
+  await test("29. Piece-Count Products ('282 Pieces', Puzzles, Bedding) Are Not Flagged as Multipacks", async () => {
+    assert.equal(
+      detectMultiPackCount("LEGO Star Wars Obi-Wan Kenobi's Jedi Starfighter 75333 Toy Building Kit (282 Pieces)"),
+      1,
+      "LEGO '282 Pieces' must be treated as 1 retail unit, not a 282-pack"
+    );
+    assert.equal(
+      detectMultiPackCount("Ravensburger 1000 Pieces Jigsaw Puzzle"),
+      1,
+      "Puzzle piece counts must be treated as 1 retail unit"
+    );
+    assert.equal(
+      detectMultiPackCount("Luxury 3pcs Queen Comforter Bedding Set"),
+      1,
+      "Bedding set piece count must be treated as 1 retail set"
+    );
+
+    const legoMatch = evaluateProductMatch({
+      targetChannel: "eBay",
+      sourceTitle: "LEGO Star Wars Obi-Wan Kenobi's Jedi Starfighter 75333 Toy Building Kit (282 Pieces)",
+      sourceBrand: "LEGO",
+      sourceModel: "75333",
+      sourceGtin: "673419357531",
+      candidateId: "EPID-LEGO-75333",
+      candidateTitle: "LEGO Star Wars: Obi-Wan Kenobi's Jedi Starfighter (75333)",
+      candidateBrand: "LEGO",
+      candidateModelOrMpn: "75333",
+      candidateGtin: "00673419357531",
+    });
+    assert.equal(legoMatch.contradictions.length, 0, "No bundle mismatch contradiction should occur on 282 Pieces");
+    assert.equal(legoMatch.isVerifiedCatalogMatch, true);
+    assert.equal(legoMatch.matchConfidence, "high");
+  });
+
+  // 30. Regression: True Multipacks Are Detected and Excluded from Single-Unit Price Medians
+  await test("30. True Multipacks ('2-Pack', 'Lot of 3', '+ Refill') Are Detected and Excluded from Medians", async () => {
+    assert.equal(detectMultiPackCount("CeraVe Moisturizing Cream 16 oz (2-Pack)"), 2);
+    assert.equal(detectMultiPackCount("(2 PACK) CeraVe Moisturizing Cream 16 Ounce Jar With Pump"), 2);
+    assert.equal(detectMultiPackCount("CeraVe Moisturizing Cream 16 oz pump + 16 oz refill, 2-pack"), 2);
+    assert.equal(detectMultiPackCount("Owala FreeSip Water Bottle Lot of 3"), 3);
+
+    const { comparableListings, excludedListings } = filterComparableEbayListings({
+      sourceTitle: "CeraVe Moisturizing Face & Body Cream with Pump - 16 fl oz",
+      sourceBrand: "CeraVe",
+      listings: [
+        {
+          itemId: "v1|101|0",
+          title: "CeraVe Moisturizing Cream 16 oz Daily Face & Body With Pump NEW",
+          price: 17.5,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/101",
+          shippingCost: 0,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|102|0",
+          title: "CeraVe Moisturizing Cream with Pump Normal to Dry Skin 16 oz",
+          price: 19.22,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/102",
+          shippingCost: 0,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|103|0",
+          title: "CeraVe Moisturizing Cream 16 oz pump + 16 oz refill, 2-pack",
+          price: 32.99,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/103",
+          shippingCost: 0,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|104|0",
+          title: "(2 PACK) Cerave Moisturizing Cream 16 Ounce Jar With Pump",
+          price: 45.0,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/104",
+          shippingCost: 8.56,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+      ],
+    });
+
+    assert.equal(comparableListings.length, 2, "Only the 2 single-unit listings should remain comparable");
+    assert.equal(excludedListings.length, 2, "Both 2-pack listings must be excluded");
+  });
+
+  // 31. Regression: 12-Digit UPC Matches Equivalent 13-Digit Leading-Zero GTIN, Rejecting Invalid/Different Codes
+  await test("31. 12-Digit UPC Matches Equivalent 13-Digit Leading-Zero GTIN While Rejecting Invalid Checksums", async () => {
+    // Owala FreeSip 24oz Very Very Dark: UPC 847280092369 == GTIN-13 0847280092369 == GTIN-14 00847280092369
+    assert.equal(areEquivalentGtins("847280092369", "0847280092369"), true);
+    assert.equal(areEquivalentGtins("847280092369", "00847280092369"), true);
+    assert.equal(normalizeCanonicalGtin("847280092369"), "00847280092369");
+
+    // Invalid check digit (847280092360 instead of 9) must fail
+    assert.equal(areEquivalentGtins("847280092360", "0847280092360"), false);
+    assert.equal(normalizeCanonicalGtin("847280092360"), null);
+
+    // Genuinely different valid UPC (043129495241 vs 847280092369) must fail
+    assert.equal(areEquivalentGtins("847280092369", "043129495241"), false);
+
+    const owalaMatch = evaluateProductMatch({
+      targetChannel: "eBay",
+      sourceTitle: "Owala FreeSip 24oz Stainless Steel Water Bottle - Very Very Dark",
+      sourceBrand: "Owala",
+      sourceModel: "FreeSip 24oz",
+      sourceGtin: "847280092369",
+      candidateId: "28056513210",
+      candidateTitle: "Owala FreeSip Insulated Stainless Steel Water Bottle 24 Oz Very Very Dark Black",
+      candidateBrand: "Owala",
+      candidateModelOrMpn: "C00018",
+      candidateGtin: "0847280092369",
+    });
+    assert.equal(owalaMatch.contradictions.length, 0);
+    assert.equal(owalaMatch.isVerifiedCatalogMatch, true);
+    assert.equal(owalaMatch.matchConfidence, "high");
+  });
+
+  // 32. Regression: Valid 13-Digit EAN-13 Supplied in a Retailer 'UPC' Field Is Accepted and Matched
+  await test("32. Valid 13-Digit EAN-13 Supplied in a Retailer 'UPC' Field Is Accepted and Matched", async () => {
+    process.env.FIRECRAWL_API_KEY = "mock-unit-test-token";
+    const cache = new MarketplaceCache();
+    const limiter = new MarketplaceRateLimiter({ maxRequestsPerSecond: 20, maxConcurrent: 4 });
+
+    const fcProvider = new FirecrawlResearchProvider(cache, limiter, async () =>
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            json: {
+              title: "CeraVe Moisturizing Face & Body Cream with Pump - 16 fl oz",
+              brand: "CeraVe",
+              price: 15.39,
+              identifiers: {
+                // Target supplies 13-digit L'Oreal/CeraVe EAN-13 in the 'upc' field
+                upc: "3606000537439",
+              },
+            },
+            metadata: { statusCode: 200 },
+          },
+        }),
+        { status: 200 }
+      )
+    );
+
+    const extracted = await fcProvider.extractProductPage("https://www.target.com/p/cerave-16oz/-/A-49118387");
+    assert.equal(extracted.identifiers.identifierConfidence, "verified_format");
+    assert.equal(extracted.identifiers.ean, "3606000537439");
+    assert.equal(extracted.integrity.contradictions.length, 0);
+
+    const ceraveMatch = evaluateProductMatch({
+      targetChannel: "eBay",
+      sourceTitle: extracted.title,
+      sourceBrand: extracted.brand,
+      sourceGtin: extracted.identifiers.gtin || extracted.identifiers.ean,
+      candidateId: "27036277242",
+      candidateTitle: "CeraVe Moisturizing Cream With Pump 16 oz (453g)",
+      candidateBrand: "CeraVe",
+      candidateGtin: "3606000537439",
+    });
+    assert.equal(ceraveMatch.isVerifiedCatalogMatch, true);
+    assert.equal(ceraveMatch.matchConfidence, "high");
+  });
+
+  // 33. Regression: Base Model ('A18') vs Variant MPN ('A18001') and Spacing Normalization ('EP9800' vs 'EP9 800')
+  await test("33. Base Model ('A18') vs Variant MPN ('A18001') and Model Spacing ('EP9800' vs 'EP9 800')", async () => {
+    // Base style A18 vs Carhartt Black color MPN A18001
+    const carharttMatch = evaluateProductMatch({
+      targetChannel: "eBay",
+      sourceTitle: "Carhartt Knit Cuffed Beanie A18",
+      sourceBrand: "Carhartt",
+      sourceModel: "A18",
+      candidateId: "14034358912",
+      candidateTitle: "Carhartt Men's Acrylic Watch Hat A18",
+      candidateBrand: "Carhartt",
+      candidateModelOrMpn: "A18001",
+    });
+    assert.equal(carharttMatch.contradictions.length, 0, "Base style A18 vs variant MPN A18001 should not be a contradiction");
+    assert.equal(carharttMatch.matchConfidence, "medium");
+    assert.equal(carharttMatch.isVerifiedCatalogMatch, false, "Without exact barcode match, variant MPN stays medium/unverified");
+
+    // Spacing difference on alphanumeric model: EP9800 vs EP9 800 in Amazon title
+    const aircareAmzMatch = evaluateProductMatch({
+      targetChannel: "Amazon",
+      sourceTitle: "AIRCARE PEDESTAL 3.5-Gal Cool Mist Evaporative Humidifier Espresso EP9800",
+      sourceBrand: "AIRCARE",
+      sourceModel: "EP9800",
+      candidateId: "B00I9YFXSS",
+      candidateTitle: "AIRCARE EP9 800 Digital Whole-House Pedestal-Style Evaporative Humidifier, Espresso",
+      candidateBrand: "AIRCARE",
+    });
+    assert.equal(aircareAmzMatch.contradictions.length, 0);
+    assert.equal(aircareAmzMatch.matchConfidence, "medium");
+
+    // Genuinely conflicting sequential models (WH-1000XM4 vs WH-1000XM5) MUST still fail with a contradiction
+    const sonyConflict = evaluateProductMatch({
+      targetChannel: "eBay",
+      sourceTitle: "Sony WH-1000XM4 Wireless Noise Canceling Headphones",
+      sourceBrand: "Sony",
+      sourceModel: "WH-1000XM4",
+      candidateId: "EPID-XM5",
+      candidateTitle: "Sony WH-1000XM5 Wireless Noise Canceling Headphones",
+      candidateBrand: "Sony",
+      candidateModelOrMpn: "WH-1000XM5",
+    });
+    assert.equal(sonyConflict.matchConfidence, "unverified");
+    assert(sonyConflict.contradictions.some((c) => /Model\/MPN mismatch/i.test(c)));
+  });
+
+  // 34. Regression: Multi-Variant Price Ranges ($11.99-$19.99) Handled Without False Contradiction
+  await test("34. Multi-Variant Price Ranges ($11.99-$19.99) Do Not Trigger False Contradictions", async () => {
+    process.env.FIRECRAWL_API_KEY = "mock-unit-test-token";
+    const cache = new MarketplaceCache();
+    const limiter = new MarketplaceRateLimiter({ maxRequestsPerSecond: 20, maxConcurrent: 4 });
+
+    const fcProvider = new FirecrawlResearchProvider(cache, limiter, async () =>
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: {
+            markdown: "# Carhartt Knit Cuffed Beanie A18\nRegular Colors: $19.99 | Clearance Colors: $11.99 - $14.99",
+            json: {
+              title: "Carhartt Knit Cuffed Beanie A18",
+              brand: "Carhartt",
+              model: "A18",
+              price: 19.99,
+              pricing: {
+                currentPrice: 11.99,
+                originalPrice: 19.99,
+                currency: "USD",
+              },
+            },
+            metadata: { statusCode: 200 },
+          },
+        }),
+        { status: 200 }
+      )
+    );
+
+    const res = await fcProvider.extractProductPage("https://www.carhartt.com/product/A18/beanie");
+    assert.equal(
+      res.integrity.contradictions.length,
+      0,
+      "Multi-variant/markdown-visible price spread must not be flagged as a fatal contradiction"
+    );
+    assert.equal(res.observedPrice, 19.99, "Conservative higher variant price ($19.99) should be used as sourceCost");
+    assert(
+      res.integrity.inferredFields.some((f) => /multi-variant price range/i.test(f)),
+      "Should record a transparent multi-variant price range note in inferredFields"
+    );
+  });
+
+  // 35. Regression: Replacement Filters, Used/Open-Box Items, and Wrong Model Tiers Excluded from Medians
+  await test("35. Replacement Filters, Used/Open-Box Items, and Wrong Model Tiers Excluded from Medians", async () => {
+    // Case A: Replacement wick filter excluded from AIRCARE EP9800 humidifier comps
+    const aircareFiltered = filterComparableEbayListings({
+      sourceTitle: "AIRCARE PEDESTAL 3.5-Gal Cool Mist Evaporative Whole-House Humidifier EP9800",
+      sourceBrand: "AIRCARE",
+      sourceModel: "EP9800",
+      listings: [
+        {
+          itemId: "v1|201|0",
+          title: "AIRCARE EP9 800 Digital Whole-House Pedestal-Style Evaporative Humidifier Espresso",
+          price: 103.5,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/201",
+          shippingCost: 0,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|202|0",
+          title: "AIRCARE EP9 800 Digital Whole-House Pedestal-Style Evaporative Humidifier Light Used",
+          price: 119.99,
+          currency: "USD",
+          condition: "Used",
+          itemWebUrl: "https://www.ebay.com/itm/202",
+          shippingCost: 0,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|203|0",
+          title: "1043 Humidifier Super Wick Filter Compatible with Essick Air AIRCARE EP9800",
+          price: 36.6,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/203",
+          shippingCost: 0,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+      ],
+    });
+    assert.equal(aircareFiltered.comparableListings.length, 1);
+    assert.equal(aircareFiltered.comparableListings[0].itemId, "v1|201|0");
+    assert.equal(aircareFiltered.excludedListings.length, 2);
+
+    // Case B: Used/EUC, Open Box, and non-Plus TYMO CurlPro excluded when researching TYMO CurlPro Plus
+    const tymoFiltered = filterComparableEbayListings({
+      sourceTitle: "TYMO CurlPro Plus Automatic Rotating Curling Iron",
+      sourceBrand: "TYMO Beauty",
+      sourceModel: "CurlPro Plus",
+      listings: [
+        {
+          itemId: "v1|301|0",
+          title: "Tymo CurlPro Plus Automatic Rotating Curling Iron Beach Waves Dual Voltage EUC",
+          price: 37.99,
+          currency: "USD",
+          condition: "Pre-Owned",
+          itemWebUrl: "https://www.ebay.com/itm/301",
+          shippingCost: 9.28,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|302|0",
+          title: "TYMO CurlPro Plus Automatic Curling Iron Open Box",
+          price: 79.98,
+          currency: "USD",
+          condition: "Open box",
+          itemWebUrl: "https://www.ebay.com/itm/302",
+          shippingCost: 7.58,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|303|0",
+          title: "TYMO CurlPro Automatic Curling Iron 1in Beach Waves Rotating Iron",
+          price: 30.23,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/303",
+          shippingCost: 7.58,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|304|0",
+          title: "NEW TYMO CurlPro Plus Automatic Rotating Curling Iron",
+          price: 77.99,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/304",
+          shippingCost: 7.58,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+      ],
+    });
+    assert.equal(tymoFiltered.comparableListings.length, 1);
+    assert.equal(tymoFiltered.comparableListings[0].itemId, "v1|304|0");
+    assert.equal(tymoFiltered.excludedListings.length, 3);
+  });
+
+  // 36. Regression: Heavy / Oversized Item (32 lb) Does Not Use Standard $6.50 Shipping or False Profitable Status
+  await test("36. Heavy / Oversized Item (32 lb) Scales Freight/FBA Tier and Blocks Unconfirmed Profitable Status", async () => {
+    const parsedDims = parseProductWeightAndDimensions({
+      specifications: {
+        Weight: "32 lb",
+        Dimensions: '27.5 in H x 18 in W x 18.5 in D',
+      },
+      title: "AIRCARE PEDESTAL 3.5-Gal Humidifier EP9800",
+    });
+    assert.equal(parsedDims.weightLb, 32);
+    assert.equal(parsedDims.sizeTier, "heavy_oversize");
+
+    // Even if resale price ($300) is high enough that net profit arithmetic is positive,
+    // an unconfirmed heavy/oversize item without user-supplied freight must not be marked profitable_estimate
+    const heavyCalc = calculateArbitrageFinancials({
+      sourceCost: 150.0,
+      sourceCostProvenance: "extracted_public_web_firecrawl",
+      targetEbayPrice: 300.0,
+      targetEbayPriceProvenance: "confirmed_marketplace_api",
+      targetAmazonPrice: 300.0,
+      targetAmazonPriceProvenance: "confirmed_marketplace_api",
+      weightLb: 32,
+      maxDimensionIn: 27.5,
+      ebayMatchConfidence: "high",
+      amazonMatchConfidence: "high",
+    });
+
+    assert(
+      (heavyCalc.ebay.fulfillmentOrPostageFee || 0) >= 35.0,
+      `32 lb item must not use $6.50 shipping (got ${heavyCalc.ebay.fulfillmentOrPostageFee})`
+    );
+    assert(
+      (heavyCalc.amazonFba.fulfillmentOrPostageFee || 0) >= 20.0,
+      `32 lb item must use FBA Large Bulky fee tier, not $9.00 standard (got ${heavyCalc.amazonFba.fulfillmentOrPostageFee})`
+    );
+    assert.equal(
+      heavyCalc.ebay.isProfitableEstimate,
+      false,
+      "Heavy/oversize item without user-verified shipping must not be marked profitable_estimate"
+    );
+    assert.equal(heavyCalc.ebay.profitabilityStatus, "insufficient_data");
+  });
+
+  // 37. Regression: Low / Unverified Match Confidence Cannot Produce 'profitable_estimate'
+  await test("37. Low or Unverified Match Confidence Never Produces 'profitable_estimate'", async () => {
+    const lowConfPositiveMath = calculateArbitrageFinancials({
+      sourceCost: 10.0,
+      sourceCostProvenance: "extracted_public_web_firecrawl",
+      targetEbayPrice: 60.0,
+      targetEbayPriceProvenance: "confirmed_marketplace_api",
+      targetAmazonPrice: 65.0,
+      targetAmazonPriceProvenance: "confirmed_marketplace_api",
+      ebayMatchConfidence: "low",
+      amazonMatchConfidence: "low",
+    });
+
+    assert((lowConfPositiveMath.ebay.netProfitEstimate || 0) > 0, "Arithmetic net profit is positive");
+    assert.equal(
+      lowConfPositiveMath.ebay.profitabilityStatus,
+      "insufficient_data",
+      "Low (title-only) match confidence must not produce profitable_estimate"
+    );
+    assert.equal(lowConfPositiveMath.ebay.isProfitableEstimate, false);
+    assert.equal(
+      lowConfPositiveMath.amazonFba.profitabilityStatus,
+      "insufficient_data",
+      "Low (title-only) Amazon match confidence must not produce profitable_estimate"
+    );
+    assert.equal(lowConfPositiveMath.amazonFba.isProfitableEstimate, false);
+  });
+
+  // 38. Adversarial GTIN & Recycled Barcode Verification
+  await test("38. Adversarial GTIN: Alphanumeric SKU Rejection, Case-Pack GTIN-14 Distinction, Dual-Region & Recycled Barcodes", async () => {
+    // Alphanumeric SKU containing 12 digits must NOT be accepted as a valid GTIN/UPC
+    assert.equal(isValidGtinCheckDigit("SKU-847280092369"), false);
+    assert.equal(normalizeCanonicalGtin("SKU-847280092369"), null);
+    assert.equal(areEquivalentGtins("SKU-847280092369", "847280092369"), false);
+
+    // 14-digit case-pack GTIN-14 (packaging indicator 1: 10847280092366, check digit 6) must NOT equate to single-unit UPC 847280092369
+    assert.equal(isValidGtinCheckDigit("10847280092366"), true);
+    assert.equal(
+      areEquivalentGtins("10847280092366", "847280092369"),
+      false,
+      "Case-pack GTIN-14 (indicator 1) must not equate to single-unit UPC-A"
+    );
+    assert.equal(areEquivalentGtins("10847280092366", "10847280092366"), true);
+
+    // Dual-region barcodes: LEGO 75333 with US UPC 673419357531 and EU EAN 5702017155593 matches catalog returning EU EAN
+    const dualRegionMatch = evaluateProductMatch({
+      targetChannel: "eBay",
+      sourceTitle: "LEGO Star Wars Obi-Wan Kenobi's Jedi Starfighter 75333",
+      sourceBrand: "LEGO",
+      sourceModel: "75333",
+      sourceGtin: "673419357531",
+      sourceAlternateGtins: ["5702017155593"],
+      candidateId: "2326105136",
+      candidateTitle: "LEGO Star Wars Obi-Wan Kenobi's Jedi Starfighter (75333)",
+      candidateBrand: "LEGO",
+      candidateModelOrMpn: "75333",
+      candidateGtin: "5702017155593",
+    });
+    assert.equal(dualRegionMatch.isVerifiedCatalogMatch, true);
+    assert.equal(dualRegionMatch.matchConfidence, "high");
+
+    // Recycled barcode onto a completely unrelated catalog product must NOT be marked isVerifiedCatalogMatch
+    const recycledBarcodeMatch = evaluateProductMatch({
+      targetChannel: "eBay",
+      sourceTitle: "Owala FreeSip 24oz Stainless Steel Water Bottle Very Very Dark",
+      sourceGtin: "847280092369",
+      candidateId: "EPID-RECYCLED-999",
+      candidateTitle: "Generic Silicone Replacement Phone Case Cover for iPhone 13",
+      candidateGtin: "0847280092369",
+    });
+    assert.equal(
+      recycledBarcodeMatch.isVerifiedCatalogMatch,
+      false,
+      "Recycled barcode with 0% title overlap must not be marked as a verified catalog match"
+    );
+    assert.equal(recycledBarcodeMatch.matchConfidence, "unverified");
+    assert(recycledBarcodeMatch.contradictions.some((c) => /recycled or misassigned barcode/i.test(c)));
+  });
+
+  // 39. Adversarial Multipack, Bidirectional Model Tier & Generation Suffixes
+  await test("39. Adversarial Multipacks ('Set of 2', '2x'), Bidirectional Model Tiers & Generation Suffixes", async () => {
+    assert.equal(detectMultiPackCount("Owala FreeSip 24oz Water Bottle Set of 2"), 2);
+    assert.equal(detectMultiPackCount("2x CeraVe Moisturizing Cream 16 oz With Pump"), 2);
+    assert.equal(detectMultiPackCount("CeraVe Cream 16oz Qty: 3"), 3);
+    assert.equal(detectMultiPackCount("LEGO Creator 3 in 1 Wild Animals Pink Flamingo 31170"), 1);
+
+    // Bidirectional model tier check: Base "CurlPro" must NOT match "CurlPro Plus" candidate
+    const reverseTierEval = evaluateModelCompatibility({
+      sourceModel: "CurlPro",
+      sourceTitle: "TYMO CurlPro Automatic Curling Iron 1 Inch",
+      candidateTitle: "TYMO CurlPro Plus Automatic Rotating Curling Iron",
+      brandMatches: true,
+      hasExactGtinMatch: false,
+    });
+    assert.equal(
+      reverseTierEval.status,
+      "contradiction",
+      "Base model 'CurlPro' must not match 'CurlPro Plus' candidate"
+    );
+
+    // Generation suffix (-V2, -2, -PRO) must NOT be accepted as a color/size variant of base model A18
+    const genSuffixEval = evaluateModelCompatibility({
+      sourceModel: "A18",
+      sourceTitle: "Carhartt Knit Cuffed Beanie A18",
+      candidateModelOrMpn: "A18-V2",
+      candidateTitle: "Carhartt Knit Cuffed Beanie A18-V2",
+      brandMatches: true,
+      hasExactGtinMatch: false,
+    });
+    assert.equal(
+      genSuffixEval.status,
+      "contradiction",
+      "Generation suffix '-V2' must not be treated as a color variant of base model A18"
+    );
+  });
+
+  // 40. Adversarial Weight/Dimension Parsing ('L x W x H in') & 2026 FBA Large Bulky / Extra-Large Fee Verification
+  await test("40. Adversarial Dimensions ('27.5 x 18 x 18.5 inches'), Grams & 2026 FBA Large Bulky/Extra-Large Fees", async () => {
+    // Composite "27.5 x 18 x 18.5 inches" where "inches" only appears at the end
+    const compositeDims = parseProductWeightAndDimensions({
+      specifications: {
+        "Product Dimensions": "27.5 x 18 x 18.5 inches",
+        "Net Weight": "16 fl oz",
+      },
+    });
+    assert.equal(compositeDims.maxDimensionIn, 27.5, "Must extract 27.5 in from '27.5 x 18 x 18.5 inches'");
+    assert.equal(compositeDims.weightLb, null, "Must not confuse '16 fl oz' with physical weight");
+    assert.equal(compositeDims.sizeTier, "heavy_oversize");
+
+    // Gram parsing
+    const gramDims = parseProductWeightAndDimensions({
+      specifications: {
+        Weight: "453 g",
+      },
+    });
+    assert.equal(gramDims.weightLb, 1);
+
+    // 2026 Amazon US FBA Large Bulky fee for 32 lb ($9.35 + 31 * $0.38 = $21.13 + $2.00 placement)
+    const bulky32Calc = calculateArbitrageFinancials({
+      sourceCost: 199.99,
+      sourceCostProvenance: "extracted_public_web_firecrawl",
+      targetAmazonPrice: 199.99,
+      targetAmazonPriceProvenance: "confirmed_marketplace_api",
+      weightLb: 32,
+      maxDimensionIn: 27.5,
+      amazonMatchConfidence: "medium",
+    });
+    assert.equal(bulky32Calc.amazonFba.fulfillmentOrPostageFee, 21.13);
+    assert.equal(bulky32Calc.amazonFba.promotedOrPlacementFee, 2.0);
+
+    // Break-even consistency between missing-Buy-Box and present-Buy-Box
+    const bulkyMissingPriceCalc = calculateArbitrageFinancials({
+      sourceCost: 199.99,
+      sourceCostProvenance: "extracted_public_web_firecrawl",
+      targetAmazonPrice: null,
+      weightLb: 32,
+      maxDimensionIn: 27.5,
+      amazonMatchConfidence: "medium",
+    });
+    assert.equal(
+      bulkyMissingPriceCalc.amazonFba.breakEvenPrice,
+      bulky32Calc.amazonFba.breakEvenPrice,
+      "Amazon breakEvenPrice must be identical whether Buy Box price is present or missing"
+    );
+  });
+
+  // 41. Adversarial Price Comparison: Extreme Low-Price Outliers, Missing Conditions & Bottle/LEGO Accessories
+  await test("41. Adversarial Comparable Filtering: Low-Price Outliers, Missing Condition & Bottle/LEGO Accessories", async () => {
+    const filtered = filterComparableEbayListings({
+      sourceTitle: "AIRCARE PEDESTAL 3.5-Gal Humidifier EP9800",
+      sourceBrand: "AIRCARE",
+      sourceModel: "EP9800",
+      referencePrice: 199.99,
+      listings: [
+        {
+          itemId: "v1|401|0",
+          title: "AIRCARE EP9800 Whole-House Pedestal Evaporative Humidifier Espresso",
+          price: 125.0,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/401",
+          shippingCost: 0,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|402|0",
+          title: "AIRCARE EP9800 Whole-House Pedestal Evaporative Humidifier",
+          price: 110.0,
+          currency: "USD",
+          condition: "Unspecified",
+          itemWebUrl: "https://www.ebay.com/itm/402",
+          shippingCost: 0,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+        {
+          itemId: "v1|403|0",
+          title: "AIRCARE EP9800 Pedestal Humidifier Option",
+          price: 9.99,
+          currency: "USD",
+          condition: "New",
+          itemWebUrl: "https://www.ebay.com/itm/403",
+          shippingCost: 0,
+          buyingOptions: ["FIXED_PRICE"],
+          retrievalTimestamp: Date.now(),
+          provenance: "confirmed_marketplace_api",
+        },
+      ],
+    });
+
+    assert.equal(filtered.comparableListings.length, 1, "Only the verified New full-price listing should remain");
+    assert.equal(filtered.comparableListings[0].itemId, "v1|401|0");
+    assert.equal(filtered.excludedListings.length, 2, "Unspecified condition and $9.99 outlier must be excluded");
   });
 
   console.log("=================================================");

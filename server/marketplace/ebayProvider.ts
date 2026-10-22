@@ -341,7 +341,7 @@ export class EbayMarketplaceProvider {
           title: item.title,
           price: Number(item.price?.value || 0),
           currency: item.price?.currency || "USD",
-          condition: item.condition || "Used",
+          condition: item.condition || "Unspecified",
           itemWebUrl: item.itemWebUrl || "",
           imageUrl: item.image?.imageUrl || item.thumbnailImages?.[0]?.imageUrl,
           shippingCost,

@@ -197,10 +197,16 @@ export function isPrivateOrReservedIp(rawIp: string): boolean {
 }
 
 /**
- * Validates standard Modulo-10 check digit for UPC-A (12), EAN-13 (13), or GTIN-14 (14)
+ * Validates standard Modulo-10 check digit for GTIN-8 (8), UPC-A (12), EAN-13 (13), or GTIN-14 (14).
+ * Rejects any string containing alphabetic or non-barcode characters.
  */
 export function isValidGtinCheckDigit(code: string): boolean {
-  const digitsOnly = code.replace(/\D/g, "");
+  if (typeof code !== "string") return false;
+  const trimmed = code.trim();
+  if (!/^[\d\s-]+$/.test(trimmed)) {
+    return false;
+  }
+  const digitsOnly = trimmed.replace(/\D/g, "");
   if (![8, 12, 13, 14].includes(digitsOnly.length)) {
     return false;
   }
@@ -1238,10 +1244,12 @@ export class FirecrawlResearchProvider {
       this.cleanString(productBlock.description) ||
       this.cleanString(metadata.description);
 
-    // 7. Extract Observed Price & Currency (with contradiction check)
+    // 7. Extract Observed Price & Currency (with multi-variant range vs. contradiction check)
     const jsonPrice = this.parsePositiveNumber(jsonBlock.price);
     const productVariantPrice = this.parsePositiveNumber(
-      productBlock.variants?.[0]?.price?.amount ?? productBlock.price?.amount
+      productBlock.variants?.[0]?.price?.amount ??
+        productBlock.price?.amount ??
+        jsonBlock.pricing?.currentPrice
     );
     const metaPrice = this.parsePositiveNumber(
       metadata["product:price:amount"] || metadata["og:price:amount"]
@@ -1252,11 +1260,31 @@ export class FirecrawlResearchProvider {
       productVariantPrice !== undefined &&
       Math.abs(jsonPrice - productVariantPrice) / Math.max(jsonPrice, productVariantPrice) > 0.05
     ) {
-      contradictions.push(
-        `Extracted JSON price ($${jsonPrice.toFixed(
-          2
-        )}) contradicts structured product variant price ($${productVariantPrice.toFixed(2)}).`
-      );
+      const hasMultipleStructuredVariants =
+        Array.isArray(productBlock.variants) && productBlock.variants.length > 1;
+      const bothPricesInMarkdown =
+        Boolean(markdown) &&
+        markdown.includes(jsonPrice.toFixed(2)) &&
+        markdown.includes(productVariantPrice.toFixed(2));
+      const hasExplicitRangeInMarkdown =
+        Boolean(markdown) &&
+        /\$\s*\d+(?:\.\d{2})?\s*[-–—]\s*\$\s*\d+(?:\.\d{2})?/.test(markdown);
+
+      if (hasMultipleStructuredVariants || bothPricesInMarkdown || hasExplicitRangeInMarkdown) {
+        const lowP = Math.min(jsonPrice, productVariantPrice).toFixed(2);
+        const highP = Math.max(jsonPrice, productVariantPrice).toFixed(2);
+        inferredFields.push(
+          `observedPrice (multi-variant price range $${lowP}–$${highP} on page; using primary price $${jsonPrice.toFixed(
+            2
+          )})`
+        );
+      } else {
+        contradictions.push(
+          `Extracted JSON price ($${jsonPrice.toFixed(
+            2
+          )}) contradicts structured product variant price ($${productVariantPrice.toFixed(2)}).`
+        );
+      }
     }
 
     if (
@@ -1506,7 +1534,7 @@ export class FirecrawlResearchProvider {
     }
 
     if (!upc && markdown) {
-      const mdUpcMatch = markdown.match(/\bUPC\s*[:#-]\s*(\d{12})\b/i);
+      const mdUpcMatch = markdown.match(/\bUPC\s*[:#-]\s*(\d{12,13})\b/i);
       if (mdUpcMatch?.[1]) {
         upc = mdUpcMatch[1];
         inferredFields.push("identifiers.upc (inferred from markdown text)");
@@ -1536,6 +1564,45 @@ export class FirecrawlResearchProvider {
         upc = digits;
         hasVerifiedIdentifier = true;
         notes.push(`UPC-A (${upc}) passed 12-digit Modulo-10 check digit validation.`);
+      } else if (digits.length === 13 && isValidGtinCheckDigit(digits)) {
+        // Retailer supplied a valid 13-digit EAN-13 / GTIN-13 in a field labeled "UPC"
+        hasVerifiedIdentifier = true;
+        if (digits.startsWith("0")) {
+          upc = digits.slice(1);
+          ean = ean || digits;
+          gtin = gtin || digits;
+          notes.push(
+            `13-digit GTIN-13 (${digits}) in UPC field normalized to 12-digit UPC-A (${upc}) after passing Modulo-10 check digit validation.`
+          );
+        } else {
+          ean = ean || digits;
+          gtin = gtin || digits;
+          upc = digits;
+          notes.push(
+            `Identifier (${digits}) in UPC field validated as a 13-digit EAN-13 / GTIN-13 via Modulo-10 check digit.`
+          );
+        }
+      } else if (digits.length === 14 && isValidGtinCheckDigit(digits)) {
+        hasVerifiedIdentifier = true;
+        gtin = gtin || digits;
+        if (digits.startsWith("00")) {
+          upc = digits.slice(2);
+          ean = ean || digits.slice(1);
+          notes.push(
+            `Identifier (${digits}) in UPC field validated as a single-unit 14-digit GTIN-14 and normalized to 12-digit UPC-A (${upc}).`
+          );
+        } else if (digits.startsWith("0")) {
+          ean = ean || digits.slice(1);
+          upc = undefined;
+          notes.push(
+            `Identifier (${digits}) in UPC field validated as a single-unit 14-digit GTIN-14 and normalized to 13-digit EAN-13 (${ean}).`
+          );
+        } else {
+          upc = undefined;
+          notes.push(
+            `Identifier (${digits}) in UPC field is a 14-digit case/multipack GTIN-14 (packaging indicator ${digits[0]}), not a single-unit UPC-A.`
+          );
+        }
       } else {
         hasInferredOrInvalidIdentifier = true;
         contradictions.push(
@@ -1550,7 +1617,9 @@ export class FirecrawlResearchProvider {
       if (digits.length === 13 && isValidGtinCheckDigit(digits)) {
         ean = digits;
         hasVerifiedIdentifier = true;
-        notes.push(`EAN-13 (${ean}) passed 13-digit Modulo-10 check digit validation.`);
+        if (!notes.some((n) => n.includes(digits))) {
+          notes.push(`EAN-13 (${ean}) passed 13-digit Modulo-10 check digit validation.`);
+        }
       } else {
         hasInferredOrInvalidIdentifier = true;
         contradictions.push(
@@ -1565,11 +1634,46 @@ export class FirecrawlResearchProvider {
       if ([8, 12, 13, 14].includes(digits.length) && isValidGtinCheckDigit(digits)) {
         gtin = digits;
         hasVerifiedIdentifier = true;
-        notes.push(`GTIN (${gtin}) passed Modulo-10 check digit validation.`);
+        if (!notes.some((n) => n.includes(digits))) {
+          notes.push(`GTIN (${gtin}) passed Modulo-10 check digit validation.`);
+        }
       } else {
         hasInferredOrInvalidIdentifier = true;
+        contradictions.push(
+          `Extracted GTIN "${gtin}" failed standard Modulo-10 check digit validation.`
+        );
         notes.push(`GTIN "${gtin}" did not pass standard check digit validation.`);
       }
+    }
+
+    // Cross-check if multiple valid barcode fields were provided on the same page but conflict
+    const validUpcCanon =
+      upc && /^\d{12}$/.test(upc) && isValidGtinCheckDigit(upc) ? upc.padStart(14, "0") : null;
+    const validEanCanon =
+      ean && /^\d{13}$/.test(ean) && isValidGtinCheckDigit(ean) ? ean.padStart(14, "0") : null;
+    const validGtinCanon =
+      gtin && /^\d{8,14}$/.test(gtin) && isValidGtinCheckDigit(gtin) ? gtin.padStart(14, "0") : null;
+
+    if (validUpcCanon && validEanCanon && validUpcCanon !== validEanCanon) {
+      if (ean!.startsWith("0")) {
+        contradictions.push(
+          `Conflicting North American barcodes on source page: UPC (${upc}) vs leading-zero EAN-13 (${ean}).`
+        );
+      } else {
+        notes.push(
+          `Dual-region valid barcodes present: US UPC-A (${upc}) and International EAN-13 (${ean}).`
+        );
+      }
+    }
+
+    if (
+      validGtinCanon &&
+      ((validUpcCanon && validGtinCanon !== validUpcCanon && (!validEanCanon || validGtinCanon !== validEanCanon)) ||
+        (!validUpcCanon && validEanCanon && validGtinCanon !== validEanCanon))
+    ) {
+      contradictions.push(
+        `Conflicting barcodes on source page: GTIN (${gtin}) does not match extracted UPC (${upc || "none"}) / EAN (${ean || "none"}).`
+      );
     }
 
     if (asin) {

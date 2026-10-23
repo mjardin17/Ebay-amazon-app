@@ -70,7 +70,7 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
   const [upc, setUpc] = useState<string>("");
   const [asin, setAsin] = useState<string>("");
   const [epid, setEpid] = useState<string>("");
-  const [outboundShipping, setOutboundShipping] = useState<number>(6.5);
+  const [outboundShippingOverride, setOutboundShippingOverride] = useState<string>("");
   const [sourceTaxRatePct, setSourceTaxRatePct] = useState<number>(0);
   const [targetEbayPriceOverride, setTargetEbayPriceOverride] = useState<string>("");
   const [targetAmazonPriceOverride, setTargetAmazonPriceOverride] = useState<string>("");
@@ -142,6 +142,9 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
       const amazonOverrideNum = targetAmazonPriceOverride.trim()
         ? parseFloat(targetAmazonPriceOverride)
         : undefined;
+      const outboundShippingNum = outboundShippingOverride.trim()
+        ? parseFloat(outboundShippingOverride)
+        : undefined;
 
       const res = await fetch("/api/research/arbitrage-enrich", {
         method: "POST",
@@ -157,7 +160,12 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
           sourceCost: sourceCost > 0 ? sourceCost : undefined,
           sourceShipping: sourceShipping >= 0 ? sourceShipping : 0,
           sourceTaxRatePct: sourceTaxRatePct >= 0 ? sourceTaxRatePct : 0,
-          outboundShippingEstimate: outboundShipping >= 0 ? outboundShipping : 6.5,
+          outboundShippingEstimate:
+            outboundShippingNum !== undefined &&
+            Number.isFinite(outboundShippingNum) &&
+            outboundShippingNum >= 0
+              ? outboundShippingNum
+              : undefined,
           targetEbayPriceOverride:
             ebayOverrideNum && ebayOverrideNum > 0 ? ebayOverrideNum : undefined,
           targetAmazonPriceOverride:
@@ -219,7 +227,9 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
       sourcePlatform,
       sourceCost: ebayEst?.sourceCost ?? (sourceCost > 0 ? sourceCost : null),
       sourceShipping,
-      outboundShippingEstimate: outboundShipping,
+      outboundShippingEstimate:
+        ebayEst?.fulfillmentOrPostageFee ??
+        (outboundShippingOverride.trim() ? parseFloat(outboundShippingOverride) || 0 : 0),
       targetEbayPrice: ebayEst?.targetResalePrice ?? null,
       targetAmazonPrice: amzEst?.targetResalePrice ?? null,
       ebayNetProfitEstimate: ebayEst?.netProfitEstimate ?? null,
@@ -254,7 +264,11 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
     setSourcePlatform(opp.sourcePlatform || "AliExpress");
     setSourceCost(opp.sourceCost || 0);
     setSourceShipping(opp.sourceShipping || 0);
-    setOutboundShipping(opp.outboundShippingEstimate || 6.5);
+    setOutboundShippingOverride(
+      opp.outboundShippingEstimate && opp.outboundShippingEstimate > 0
+        ? String(opp.outboundShippingEstimate)
+        : ""
+    );
     setTargetEbayPriceOverride(opp.targetEbayPrice ? String(opp.targetEbayPrice) : "");
     setTargetAmazonPriceOverride(opp.targetAmazonPrice ? String(opp.targetAmazonPrice) : "");
     if (opp.enrichmentReport) {
@@ -263,15 +277,15 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
     }
   };
 
-  // Convert current research into ItemAnalysis for AI Lister or Drafts
+  // Convert current research into ItemAnalysis for AI Lister or Drafts using only real/observed data
   const buildItemAnalysisFromResearch = (): ItemAnalysis => {
     const fc = enrichmentReport?.firecrawlResearch || extractResult;
     const ebayEst = enrichmentReport?.financialEstimates.ebay;
     const amzEst = enrichmentReport?.financialEstimates.amazonFba;
+    const activeStats = enrichmentReport?.marketplaceData.ebayBrowse.activePriceStats;
     const recPrice =
-      ebayEst?.targetResalePrice ||
-      (targetEbayPriceOverride ? parseFloat(targetEbayPriceOverride) : 0) ||
-      (sourceCost > 0 ? Number((sourceCost * 1.65).toFixed(2)) : 49.99);
+      ebayEst?.targetResalePrice ??
+      (targetEbayPriceOverride.trim() ? parseFloat(targetEbayPriceOverride) || 0 : 0);
 
     const effTitle = (title.trim() || fc?.title || "Researched Arbitrage Item").slice(0, 80);
     const effBrand = brand.trim() || fc?.brand || "Unbranded";
@@ -288,6 +302,13 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
     if (fc?.identifiers?.mpn) {
       effSpecs["MPN"] = fc.identifiers.mpn;
     }
+
+    const lowComp = activeStats?.lowestPrice ?? recPrice;
+    const medianComp = activeStats?.medianPrice ?? recPrice;
+    const highComp = activeStats?.highestPrice ?? recPrice;
+    const effOutboundShipping =
+      ebayEst?.fulfillmentOrPostageFee ??
+      (outboundShippingOverride.trim() ? parseFloat(outboundShippingOverride) || 0 : 0);
 
     return {
       title: effTitle,
@@ -308,18 +329,18 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
         .map(([k, v]) => `<li><strong>${k}:</strong> ${v}</li>`)
         .join("")}</ul>`,
       comps: {
-        fastSalePrice: Number((recPrice * 0.92).toFixed(2)),
+        fastSalePrice: lowComp,
         recommendedPrice: recPrice,
-        highProfitPrice: Number((recPrice * 1.12).toFixed(2)),
-        medianSoldComps: recPrice,
-        lowSoldComp: Number((recPrice * 0.85).toFixed(2)),
-        highSoldComp: Number((recPrice * 1.2).toFixed(2)),
-        sellThroughRate: 75,
-        compNotes: `Enriched via Cross-Market Research${
-          fc ? ` + Firecrawl extraction (${fc.domain})` : ""
-        }. Target resale price provenance: ${
-          ebayEst?.targetResalePriceProvenance || "estimated_inferred_ai"
-        }.`,
+        highProfitPrice: highComp,
+        medianSoldComps: medianComp,
+        lowSoldComp: lowComp,
+        highSoldComp: highComp,
+        sellThroughRate: 0,
+        compNotes: activeStats
+          ? activeStats.note
+          : `No verified eBay completed sales or active Browse listings available. Target resale price provenance: ${
+              ebayEst?.targetResalePriceProvenance || "missing"
+            }.`,
       },
       flawAndInspection: {
         flawsDetected: [],
@@ -333,23 +354,29 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
           "Please verify model number and compatibility specifications prior to purchase.",
       },
       shippingOptimization: {
-        estimatedWeightOz: 16,
-        packageDimensions: "10 x 8 x 4 in",
-        recommendedCarrier: "USPS Ground Advantage",
-        estimatedShippingCost: outboundShipping,
-        cubicRateEligible: true,
+        estimatedWeightOz: 0,
+        packageDimensions:
+          fc?.specifications?.["Dimensions"] ||
+          fc?.specifications?.["Product Dimensions"] ||
+          "Not verified",
+        recommendedCarrier: "Verify package weight & dimensions before selecting carrier",
+        estimatedShippingCost: effOutboundShipping,
+        cubicRateEligible: false,
       },
       crossListingPrices: {
         ebay: recPrice,
-        amazonFba: amzEst?.targetResalePrice || Number((recPrice * 1.08).toFixed(2)),
-        mercari: Number((recPrice * 0.95).toFixed(2)),
-        poshmark: Number((recPrice * 1.05).toFixed(2)),
-        facebookMarketplace: Number((recPrice * 0.9).toFixed(2)),
+        amazonFba: amzEst?.targetResalePrice ?? undefined,
+        mercari: 0,
+        poshmark: 0,
+        facebookMarketplace: 0,
       },
       negotiationRules: {
-        autoAcceptOfferAbove: Number((recPrice * 0.92).toFixed(2)),
-        autoDeclineOfferBelow: Number((ebayEst?.breakEvenPrice || recPrice * 0.75).toFixed(2)),
-        counterOfferStrategy: "Offer 5% off for immediate checkout.",
+        autoAcceptOfferAbove: recPrice,
+        autoDeclineOfferBelow: ebayEst?.breakEvenPrice ?? 0,
+        counterOfferStrategy:
+          ebayEst?.breakEvenPrice !== null && ebayEst?.breakEvenPrice !== undefined
+            ? `Do not accept below break-even ($${ebayEst.breakEvenPrice.toFixed(2)}).`
+            : "Verify source cost and shipping before configuring auto-accept rules.",
       },
     };
   };
@@ -773,15 +800,16 @@ export const CrossMarketResearchPanel: React.FC<CrossMarketResearchPanelProps> =
 
           <div>
             <label className="block text-[11px] font-medium text-slate-400 mb-1">
-              Est. Outbound Domestic Postage ($):
+              Outbound Domestic Postage Override ($):
             </label>
             <input
               id="input-research-outbound-shipping"
               type="number"
               min="0"
               step="0.5"
-              value={outboundShipping}
-              onChange={(e) => setOutboundShipping(Math.max(0, parseFloat(e.target.value) || 0))}
+              value={outboundShippingOverride}
+              onChange={(e) => setOutboundShippingOverride(e.target.value)}
+              placeholder="Auto by weight ($6.50+)"
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:border-cyan-400 focus:outline-none"
             />
           </div>

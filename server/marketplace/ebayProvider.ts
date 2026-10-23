@@ -24,6 +24,7 @@ export class EbayTokenManager {
   private cachedToken: string | null = null;
   private tokenExpiresAt = 0;
   private inFlightTokenPromise: Promise<string> | null = null;
+  private lastError: { state: CapabilityState; message: string; timestamp: number } | null = null;
   private httpExecutor: HttpExecutor;
 
   constructor(httpExecutor?: HttpExecutor) {
@@ -35,7 +36,13 @@ export class EbayTokenManager {
   }
 
   public hasCredentials(): boolean {
-    return Boolean(process.env.EBAY_CLIENT_ID && process.env.EBAY_CLIENT_SECRET);
+    const clientId = (process.env.EBAY_CLIENT_ID || "").trim();
+    const clientSecret = (process.env.EBAY_CLIENT_SECRET || "").trim();
+    return Boolean(clientId.length > 0 && clientSecret.length > 0);
+  }
+
+  public recordError(state: CapabilityState, message: string): void {
+    this.lastError = { state, message, timestamp: Date.now() };
   }
 
   public getCapabilityState(): { state: CapabilityState; message: string } {
@@ -43,6 +50,12 @@ export class EbayTokenManager {
       return {
         state: "not_configured",
         message: "eBay API credentials (EBAY_CLIENT_ID / EBAY_CLIENT_SECRET) not configured.",
+      };
+    }
+    if (this.lastError && Date.now() - this.lastError.timestamp < 5 * 60 * 1000) {
+      return {
+        state: this.lastError.state,
+        message: this.lastError.message,
       };
     }
     return {
@@ -66,8 +79,8 @@ export class EbayTokenManager {
       return this.inFlightTokenPromise;
     }
 
-    const clientId = process.env.EBAY_CLIENT_ID;
-    const clientSecret = process.env.EBAY_CLIENT_SECRET;
+    const clientId = (process.env.EBAY_CLIENT_ID || "").trim();
+    const clientSecret = (process.env.EBAY_CLIENT_SECRET || "").trim();
     const isSandbox = (process.env.EBAY_ENVIRONMENT || "").toUpperCase() === "SANDBOX";
 
     if (!clientId || !clientSecret) {
@@ -99,7 +112,15 @@ export class EbayTokenManager {
 
       if (!response.ok) {
         const text = await response.text().catch(() => "");
-        const err: any = new Error(`eBay OAuth Failed HTTP ${response.status}: ${text.slice(0, 200)}`);
+        const msg = `eBay OAuth Failed HTTP ${response.status}: ${text.slice(0, 200)}`;
+        if (response.status === 401) {
+          this.recordError("authentication_failed", msg);
+        } else if (response.status === 403) {
+          this.recordError("restricted", msg);
+        } else if (response.status === 429) {
+          this.recordError("rate_limited", msg);
+        }
+        const err: any = new Error(msg);
         err.status = response.status;
         throw err;
       }
@@ -107,6 +128,7 @@ export class EbayTokenManager {
       const data = await response.json();
       this.cachedToken = data.access_token;
       this.tokenExpiresAt = Date.now() + (data.expires_in || 7200) * 1000;
+      this.lastError = null;
       return this.cachedToken!;
     })().finally(() => {
       this.inFlightTokenPromise = null;
@@ -221,6 +243,7 @@ export class EbayMarketplaceProvider {
 
         if (res.status === 401) {
           this.tokenManager.invalidateToken();
+          this.tokenManager.recordError("authentication_failed", "eBay Catalog API: 401 Unauthorized token");
           const err: any = new Error("eBay Catalog API: 401 Unauthorized token");
           err.status = 401;
           throw err;
@@ -228,7 +251,10 @@ export class EbayMarketplaceProvider {
 
         if (!res.ok) {
           const text = await res.text().catch(() => "");
-          const err: any = new Error(`eBay Catalog API HTTP ${res.status}: ${text.slice(0, 200)}`);
+          const msg = `eBay Catalog API HTTP ${res.status}: ${text.slice(0, 200)}`;
+          if (res.status === 403) this.tokenManager.recordError("restricted", msg);
+          else if (res.status === 429) this.tokenManager.recordError("rate_limited", msg);
+          const err: any = new Error(msg);
           err.status = res.status;
           throw err;
         }
@@ -314,6 +340,7 @@ export class EbayMarketplaceProvider {
 
         if (res.status === 401) {
           this.tokenManager.invalidateToken();
+          this.tokenManager.recordError("authentication_failed", "eBay Browse API: 401 Unauthorized token");
           const err: any = new Error("eBay Browse API: 401 Unauthorized token");
           err.status = 401;
           throw err;
@@ -321,7 +348,10 @@ export class EbayMarketplaceProvider {
 
         if (!res.ok) {
           const text = await res.text().catch(() => "");
-          const err: any = new Error(`eBay Browse API HTTP ${res.status}: ${text.slice(0, 200)}`);
+          const msg = `eBay Browse API HTTP ${res.status}: ${text.slice(0, 200)}`;
+          if (res.status === 403) this.tokenManager.recordError("restricted", msg);
+          else if (res.status === 429) this.tokenManager.recordError("rate_limited", msg);
+          const err: any = new Error(msg);
           err.status = res.status;
           throw err;
         }

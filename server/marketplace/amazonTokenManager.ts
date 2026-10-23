@@ -56,9 +56,9 @@ export class AmazonTokenManager {
    * Checks whether required credentials are set in the environment
    */
   public hasCredentials(): boolean {
-    const credentialId = process.env.AMAZON_CREATORS_CREDENTIAL_ID;
-    const credentialSecret = process.env.AMAZON_CREATORS_CREDENTIAL_SECRET;
-    return Boolean(credentialId && credentialSecret);
+    const credentialId = (process.env.AMAZON_CREATORS_CREDENTIAL_ID || "").trim();
+    const credentialSecret = (process.env.AMAZON_CREATORS_CREDENTIAL_SECRET || "").trim();
+    return Boolean(credentialId.length > 0 && credentialSecret.length > 0);
   }
 
   /**

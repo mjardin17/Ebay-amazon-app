@@ -2032,6 +2032,61 @@ async function runTests() {
     assert.equal(filtered.excludedListings.length, 2, "Unspecified condition and $9.99 outlier must be excluded");
   });
 
+  // 42. Provider Honesty: Whitespace Credentials, eBay Auth/Restriction State Tracking & Zero Unconfigured Sold Confidence
+  await test("42. Provider Honesty: Whitespace Credentials, eBay Auth/Restriction State & Unconfigured Sold Confidence", async () => {
+    const prevAmzId = process.env.AMAZON_CREATORS_CREDENTIAL_ID;
+    const prevAmzSec = process.env.AMAZON_CREATORS_CREDENTIAL_SECRET;
+    const prevEbayId = process.env.EBAY_CLIENT_ID;
+    const prevEbaySec = process.env.EBAY_CLIENT_SECRET;
+    const prevInsights = process.env.EBAY_MARKETPLACE_INSIGHTS_APPROVED;
+
+    try {
+      // 1. Whitespace-only credentials must report not_configured for both Amazon and eBay
+      process.env.AMAZON_CREATORS_CREDENTIAL_ID = "   ";
+      process.env.AMAZON_CREATORS_CREDENTIAL_SECRET = "   ";
+      process.env.EBAY_CLIENT_ID = "   ";
+      process.env.EBAY_CLIENT_SECRET = "   ";
+      delete process.env.EBAY_MARKETPLACE_INSIGHTS_APPROVED;
+
+      const amzTokenMgr = new AmazonTokenManager();
+      const ebayTokenMgr = new EbayTokenManager();
+      assert.equal(amzTokenMgr.hasCredentials(), false, "Whitespace Amazon credentials must be rejected");
+      assert.equal(amzTokenMgr.getCapabilityState().state, "not_configured");
+      assert.equal(ebayTokenMgr.hasCredentials(), false, "Whitespace eBay credentials must be rejected");
+      assert.equal(ebayTokenMgr.getCapabilityState().state, "not_configured");
+
+      // 2. Unconfigured SoldHistoryProvider must not claim 75% confidence score
+      const ebayProvUnconf = new EbayMarketplaceProvider(ebayTokenMgr, new MarketplaceCache(), new MarketplaceRateLimiter({ maxRequestsPerSecond: 10, maxConcurrent: 2 }));
+      const soldProv = new HybridSoldHistoryProvider(ebayProvUnconf, new MarketplaceCache());
+      const soldHistory = await soldProv.getSalesHistory({ query: "test item" });
+      assert.equal(soldHistory.status, "not_configured");
+      assert.equal(soldHistory.estimatedMetrics?.confidenceScorePct, 0, "Unconfigured sold history must report 0% confidence, not 75%");
+
+      // 3. eBay 401 OAuth failure must transition capability state from 'available' to 'authentication_failed'
+      process.env.EBAY_CLIENT_ID = "invalid-ebay-id";
+      process.env.EBAY_CLIENT_SECRET = "invalid-ebay-secret";
+      const ebayToken401 = new EbayTokenManager(async () => new Response("invalid_client", { status: 401 }));
+      const ebayProv401 = new EbayMarketplaceProvider(ebayToken401, new MarketplaceCache(), new MarketplaceRateLimiter({ maxRequestsPerSecond: 10, maxConcurrent: 2 }));
+
+      await assert.rejects(async () => {
+        await ebayProv401.searchBrowseItems("lego");
+      });
+      const browseCapAfter401 = await ebayProv401.getBrowseCapabilityStatus();
+      assert.equal(browseCapAfter401.state, "authentication_failed", "eBay 401 must record authentication_failed state");
+    } finally {
+      if (prevAmzId === undefined) delete process.env.AMAZON_CREATORS_CREDENTIAL_ID;
+      else process.env.AMAZON_CREATORS_CREDENTIAL_ID = prevAmzId;
+      if (prevAmzSec === undefined) delete process.env.AMAZON_CREATORS_CREDENTIAL_SECRET;
+      else process.env.AMAZON_CREATORS_CREDENTIAL_SECRET = prevAmzSec;
+      if (prevEbayId === undefined) delete process.env.EBAY_CLIENT_ID;
+      else process.env.EBAY_CLIENT_ID = prevEbayId;
+      if (prevEbaySec === undefined) delete process.env.EBAY_CLIENT_SECRET;
+      else process.env.EBAY_CLIENT_SECRET = prevEbaySec;
+      if (prevInsights === undefined) delete process.env.EBAY_MARKETPLACE_INSIGHTS_APPROVED;
+      else process.env.EBAY_MARKETPLACE_INSIGHTS_APPROVED = prevInsights;
+    }
+  });
+
   console.log("=================================================");
   console.log(`TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log("=================================================");

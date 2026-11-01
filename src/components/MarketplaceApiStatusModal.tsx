@@ -136,7 +136,7 @@ export const MarketplaceApiStatusModal: React.FC<Props> = ({ isOpen, onClose }) 
                 Marketplace API Status & Integration Layer
               </h3>
               <p className="text-xs text-slate-400">
-                Official Amazon Creators API, eBay Catalog & Browse API, and Data Provenance
+                Official Amazon Creators API, eBay Catalog & Browse API, Firecrawl Research & Data Provenance
               </p>
             </div>
           </div>
@@ -263,15 +263,14 @@ export const MarketplaceApiStatusModal: React.FC<Props> = ({ isOpen, onClose }) 
               <span>Strict Data Provenance & Anti-Hallucination Policy</span>
             </div>
             <p className="text-[11px] text-indigo-200/80 leading-relaxed">
-              When live API credentials or commercial approvals are unconfigured, Listofa AI
-              transparently labels calculations as <strong>Estimated / Inferred Resale Comps (AI Model)</strong>. Confirmed transaction sales from official marketplace channels are never fabricated or simulated.
+              Listofa AI enforces strict 3-tier provenance: <strong>Confirmed Marketplace API</strong> (Amazon Creators & eBay Official APIs), <strong>Extracted Public Web Research</strong> (Firecrawl supplementary product-page extraction — never treated as proof of completed sales, live inventory, ungating, or actual fees), and <strong>Estimated / Inferred Resale Comps (AI Model)</strong>.
             </p>
           </div>
         </div>
 
         {/* Footer */}
         <div className="p-4 border-t border-slate-800 bg-slate-850/80 flex items-center justify-between text-xs text-slate-400">
-          <span>Centralized Rate Limiting: 1 req/sec (Amazon), 4 req/sec (eBay)</span>
+          <span>Rate Limiting: 1 req/s (Amazon), 4 req/s (eBay), 2 req/s (Firecrawl)</span>
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs transition"

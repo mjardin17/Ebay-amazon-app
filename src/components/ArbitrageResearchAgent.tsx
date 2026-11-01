@@ -22,16 +22,20 @@ import {
   Trophy,
   Image as ImageIcon,
   Building2,
+  Bookmark,
 } from "lucide-react";
-import { ArbitrageOpportunity, ItemAnalysis } from "../types";
+import { ArbitrageOpportunity, ItemAnalysis, SavedResearchOpportunity } from "../types";
 import { VeroCheckerTool } from "./VeroCheckerTool";
 import { TemuSoldArbitrageScanner } from "./TemuSoldArbitrageScanner";
 import { AlibabaArbitrageScanner } from "./AlibabaArbitrageScanner";
 import { TopMoneyMakersLeaderboard } from "./TopMoneyMakersLeaderboard";
+import { CrossMarketResearchPanel } from "./CrossMarketResearchPanel";
+import { idbGet, idbSet } from "../utils/storage";
 
 interface ArbitrageResearchAgentProps {
   onSendToLister: (item: ItemAnalysis) => void;
   onOpenPinStudio?: (item: ItemAnalysis) => void;
+  onSaveDraft?: (item: ItemAnalysis) => void;
 }
 
 const NICHE_PRESETS = [
@@ -70,12 +74,62 @@ const QUICK_SCAN_EXAMPLES = [
 export const ArbitrageResearchAgent: React.FC<ArbitrageResearchAgentProps> = ({
   onSendToLister,
   onOpenPinStudio,
+  onSaveDraft,
 }) => {
   const [activeMode, setActiveMode] = useState<
     "top-moneymakers" | "temu-sold" | "alibaba" | "niche" | "single" | "vero"
   >("top-moneymakers");
   const [selectedTemuProduct, setSelectedTemuProduct] = useState<{ query: string; cost: number } | null>(null);
   const [selectedAlibabaProduct, setSelectedAlibabaProduct] = useState<{ query: string; cost: number } | null>(null);
+
+  // Persistent Saved Opportunities Watchlist
+  const [savedOpportunities, setSavedOpportunities] = useState<SavedResearchOpportunity[]>(() => {
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        const raw = window.localStorage.getItem("listofa_saved_opportunities");
+        if (raw) {
+          return JSON.parse(raw);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to parse saved opportunities from localStorage:", e);
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    let isMounted = true;
+    idbGet<SavedResearchOpportunity[]>("listofa_saved_opportunities")
+      .then((saved) => {
+        if (saved && saved.length > 0 && isMounted) {
+          setSavedOpportunities(saved);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    idbSet("listofa_saved_opportunities", savedOpportunities).catch(() => {});
+    try {
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.setItem(
+          "listofa_saved_opportunities",
+          JSON.stringify(savedOpportunities)
+        );
+      }
+    } catch {}
+  }, [savedOpportunities]);
+
+  const handleSaveOpportunity = (opp: SavedResearchOpportunity) => {
+    setSavedOpportunities((prev) => [opp, ...prev.filter((item) => item.id !== opp.id)]);
+  };
+
+  const handleDeleteOpportunity = (id: string) => {
+    setSavedOpportunities((prev) => prev.filter((item) => item.id !== id));
+  };
 
   const handleSelectForSoldAnalysis = (productName: string, estimatedCost: number) => {
     setSelectedTemuProduct({ query: productName, cost: estimatedCost });
@@ -337,7 +391,15 @@ export const ArbitrageResearchAgent: React.FC<ArbitrageResearchAgentProps> = ({
             }`}
           >
             <LinkIcon className="w-4 h-4" />
-            <span>Supplier Link / Product Scanner</span>
+            <span>Supplier Link & Firecrawl Research</span>
+            <span className="px-1.5 py-0.2 rounded text-[10px] bg-slate-950 text-cyan-300 border border-cyan-800/80 font-bold">
+              FIRECRAWL
+            </span>
+            {savedOpportunities.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-700 font-bold">
+                {savedOpportunities.length}
+              </span>
+            )}
           </button>
 
           <button
@@ -810,10 +872,29 @@ export const ArbitrageResearchAgent: React.FC<ArbitrageResearchAgentProps> = ({
                 className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 font-bold text-sm shadow-md transition disabled:opacity-50"
               >
                 <Sparkles className={`w-4 h-4 ${singleScanning ? "animate-spin" : ""}`} />
-                <span>{singleScanning ? "Analyzing Arbitrage Spread..." : "Analyze Arbitrage & Profit"}</span>
+                <span>{singleScanning ? "Analyzing Arbitrage Spread..." : "Analyze Arbitrage & Profit (AI Model)"}</span>
               </button>
             </div>
           </div>
+
+          {/* Integrated Firecrawl Public Web Extraction & Official Amazon/eBay Cross-Market Matching Engine */}
+          <CrossMarketResearchPanel
+            title={singleTitle}
+            setTitle={setSingleTitle}
+            sourceUrl={singleUrl}
+            setSourceUrl={setSingleUrl}
+            sourcePlatform={singlePlatform}
+            setSourcePlatform={setSinglePlatform}
+            sourceCost={singleCost}
+            setSourceCost={setSingleCost}
+            sourceShipping={singleShipping}
+            setSourceShipping={setSingleShipping}
+            savedOpportunities={savedOpportunities}
+            onSaveOpportunity={handleSaveOpportunity}
+            onDeleteOpportunity={handleDeleteOpportunity}
+            onSendToLister={onSendToLister}
+            onSaveDraft={onSaveDraft}
+          />
 
           {/* Single Result Breakdown Card */}
           {singleResult && (

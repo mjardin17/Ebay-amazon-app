@@ -137,3 +137,12 @@ export const ebayRateLimiter = new MarketplaceRateLimiter({
   initialBackoffMs: 500,
   timeoutMs: 12000,
 });
+
+export const firecrawlRateLimiter = new MarketplaceRateLimiter({
+  maxRequestsPerSecond: 2, // Firecrawl standard public page extraction rate limit
+  maxConcurrent: 2,
+  maxRetries: 2,
+  initialBackoffMs: 600,
+  timeoutMs: 15000,
+});
+

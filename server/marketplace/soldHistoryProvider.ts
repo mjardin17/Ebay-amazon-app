@@ -151,10 +151,10 @@ export class HybridSoldHistoryProvider implements SoldHistoryProvider {
         highSoldComp: 0,
         estimatedUnitsSold90Days: 0,
         estimatedSellThroughRatePct: 0,
-        demandVelocity: "Moderate",
-        confidenceScorePct: 75,
-        marketModelNotes:
-          "Statistical estimation derived from public catalog comps, category velocity algorithms, and historical pricing patterns. Not official eBay transaction logs.",
+      demandVelocity: capability.state === "restricted" ? "Moderate" : "Low Velocity",
+      confidenceScorePct: 0,
+      marketModelNotes:
+        "No official eBay Marketplace Insights transaction logs available. Configure EBAY_CLIENT_ID, EBAY_CLIENT_SECRET, and EBAY_MARKETPLACE_INSIGHTS_APPROVED=true for confirmed sold history.",
       },
     };
 

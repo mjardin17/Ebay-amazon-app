@@ -9,6 +9,13 @@ import { soldHistoryProvider } from "./server/marketplace/soldHistoryProvider";
 import { marketplaceCapabilityManager } from "./server/marketplace/capabilityManager";
 import { marketplaceCache } from "./server/marketplace/cache";
 import { amazonTokenManager } from "./server/marketplace/amazonTokenManager";
+import { firecrawlProvider } from "./server/marketplace/firecrawlProvider";
+import {
+  arbitrageEnrichmentService,
+  validateArbitrageEnrichmentPayload,
+  validateFirecrawlExtractPayload,
+  verifyResearchApiAccessToken,
+} from "./server/marketplace/arbitrageEnrichment";
 
 dotenv.config();
 
@@ -283,6 +290,81 @@ app.post("/api/marketplace/sold-history", async (req, res) => {
     res.status(500).json({
       success: false,
       error: err.message || "Failed to fetch sales history",
+    });
+  }
+});
+
+// 1h. Firecrawl Supplementary Public Product-Page Extraction
+app.post("/api/research/firecrawl/extract", async (req, res) => {
+  try {
+    const auth = verifyResearchApiAccessToken(req.headers as Record<string, unknown>);
+    if (!auth.authorized) {
+      return res.status(401).json({
+        success: false,
+        error: auth.error,
+      });
+    }
+
+    const validation = validateFirecrawlExtractPayload(req.body);
+    if (!validation.valid || !validation.sanitized) {
+      return res.status(400).json({
+        success: false,
+        error: validation.error || "Invalid Firecrawl extraction request payload.",
+      });
+    }
+
+    const result = await firecrawlProvider.extractProductPage(validation.sanitized.url, {
+      forceRefresh: validation.sanitized.forceRefresh,
+    });
+
+    const isSuccess =
+      result.extractionStatus === "extracted" || result.extractionStatus === "partial";
+
+    res.json({
+      success: isSuccess,
+      source: "firecrawl_public_web",
+      provenance: "extracted_public_web_firecrawl",
+      data: result,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err.message || "Failed to extract public product page via Firecrawl",
+    });
+  }
+});
+
+// 1i. Cross-Marketplace Product Matching & Arbitrage Enrichment Engine
+app.post("/api/research/arbitrage-enrich", async (req, res) => {
+  try {
+    const auth = verifyResearchApiAccessToken(req.headers as Record<string, unknown>);
+    if (!auth.authorized) {
+      return res.status(401).json({
+        success: false,
+        error: auth.error,
+      });
+    }
+
+    const validation = validateArbitrageEnrichmentPayload(req.body);
+    if (!validation.valid || !validation.sanitized) {
+      return res.status(400).json({
+        success: false,
+        error: validation.error || "Invalid arbitrage enrichment request payload.",
+      });
+    }
+
+    const report = await arbitrageEnrichmentService.enrichArbitrageOpportunity(
+      validation.sanitized
+    );
+
+    res.json({
+      success: true,
+      data: report,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err.message || "Failed to run cross-marketplace arbitrage enrichment",
     });
   }
 });

@@ -160,6 +160,7 @@ export default function App() {
           <ArbitrageResearchAgent
             onSendToLister={handleSendToLister}
             onOpenPinStudio={handleOpenPinStudio}
+            onSaveDraft={handleSaveDraft}
           />
         )}
 
